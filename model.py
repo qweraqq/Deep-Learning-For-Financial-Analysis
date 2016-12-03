@@ -6,8 +6,7 @@ from keras.layers.wrappers import Bidirectional
 from keras.optimizers import Adam
 from keras.regularizers import l2
 from keras.callbacks import EarlyStopping
-from fa.model import FinancialNewsAnalysisModel
-from ta.multi_task_model import FinancialTimeSeriesAnalysisModel
+
 
 import numpy as np
 import os
@@ -40,17 +39,18 @@ class CombinedAnalysisModel(object):
         financial_time_series_input = Input(shape=(self.time_step_x2, self.dim_input_x2), name='x2')
         lstm = LSTM(output_dim=nb_hidden_units, dropout_U=dropout, dropout_W=dropout,
                     W_regularizer=l2(l2_norm_alpha), b_regularizer=l2(l2_norm_alpha),
-                    activation='tanh', name='h1')
+                    activation='tanh', name='h1', trainable=False)
         bi_lstm = Bidirectional(lstm,
-                                input_shape=(self.time_step_x1, self.dim_input_x1), merge_mode='concat', name='h1')
+                                input_shape=(self.time_step_x1, self.dim_input_x1), merge_mode='concat', name='h1',
+                                trainable=False)
         h1 = bi_lstm(news_input)
 
         lstm_layer_1 = LSTM(output_dim=nb_hidden_units, dropout_U=dropout, dropout_W=dropout,
                             W_regularizer=l2(l2_norm_alpha), b_regularizer=l2(l2_norm_alpha), activation='tanh',
-                            return_sequences=True, name='lstm_layer1')
+                            return_sequences=True, name='lstm_layer1', trainable=False)
         lstm_layer_23 = LSTM(output_dim=nb_hidden_units, dropout_U=dropout, dropout_W=dropout,
                              W_regularizer=l2(l2_norm_alpha), b_regularizer=l2(l2_norm_alpha), activation='tanh',
-                             return_sequences=False, name='lstm_layer2_loss3')
+                             return_sequences=False, name='lstm_layer2_loss3', trainable=False)
         h2_layer_1 = lstm_layer_1(financial_time_series_input)
         h2_layer_2 = lstm_layer_23(h2_layer_1)
         h_3 = Merge(mode='concat', name='h3')([h1, h2_layer_2])
@@ -72,13 +72,14 @@ class CombinedAnalysisModel(object):
         # loss = custom_objective
         self.model.compile(optimizer=optimizer, loss=loss)
 
-    def fit_model(self, X, y, X_val=None, y_val=None, epoch=500):
+    def fit_model(self, X1, X2, y, X1_val=None, X2_val=None, y_val=None, epoch=50):
         early_stopping = EarlyStopping(monitor='val_loss', patience=3, verbose=0)
-        if X_val is None:
-            self.model.fit(X, y, batch_size=self.batch_size, nb_epoch=epoch, validation_split=0.2,
+        if X1_val is None:
+            self.model.fit([X1, X2], y, batch_size=self.batch_size, nb_epoch=epoch, validation_split=0.2,
                            shuffle=True, callbacks=[early_stopping])
         else:
-            self.model.fit(X, y, batch_size=self.batch_size, nb_epoch=epoch, validation_data=(X_val, y_val),
+            self.model.fit([X1, X2], y, batch_size=self.batch_size, nb_epoch=epoch,
+                           validation_data=([X1_val, X2_val], y_val),
                            shuffle=True, callbacks=[early_stopping])
 
     def save(self):
@@ -101,15 +102,25 @@ class CombinedAnalysisModel(object):
             for w in weights:
                 print("%s: %s" % (w.shape, w))
 
-    def model_eval(self, X, y):
-        y_hat = self.model.predict(X, batch_size=1)
+    def model_eval(self, X1, X2, y):
+        y_hat = self.model.predict([X1, X2], batch_size=1)
         count_true = 0
         count_all = y.shape[0]
         for i in range(y.shape[0]):
             count_true = count_true + 1 if y[i,0]*y_hat[i,0]>0 else count_true
             print y[i,0],y_hat[i,0]
-        print count_all,count_true
+        print count_all, count_true
 
 if __name__ == '__main__':
     model = CombinedAnalysisModel(100, 200, 5, 400, model_path='ca.model.weights',
-                                  fa_model_path="fa\\fa.model.weights", ta_model_path="ta\\multask_ta.model.weights")
+                                  fa_model_path="fa.model.weights", ta_model_path="multask_ta.model.weights")
+    model.compile_model(lr=0.001)
+    X1 = np.load('X1.npy')
+    X2 = np.load('X2.npy')
+    X1_val = np.load('X1_val.npy')
+    X2_val = np.load('X2_val.npy')
+    y = np.load('y.npy') / 100
+    y_val = np.load('y_val.npy') / 100
+    model.fit_model(X1,X2,y,X1_val,X2_val,y_val)
+    model.save()
+    model.model_eval(X1_val,X2_val,y_val)
